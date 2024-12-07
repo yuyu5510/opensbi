@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2019 Western Digital Corporation or its affiliates.
+# Copyright (c) 2025 Archlab, Science Tokyo
 #
 # Authors:
 #   Anup Patel <anup.patel@wdc.com>
-#
+#   Archlab, Science Tokyo
 
 # Select Make Options:
 # o  Do not use make's built-in rules
@@ -734,3 +735,17 @@ endif
 
 .PHONY: FORCE
 FORCE:
+
+rvcpu_firmware_build_dir      := build/platform/rvcpu/firmware
+.PHONY: hex
+hex:
+	make $(addprefix $(rvcpu_firmware_build_dir)/fw_payload,.32.hex .64.hex .128.hex) --no-print-directory
+
+%.32.hex: %.bin
+	hexdump -v -e '1/4 "%08x\n"' $< > $@
+
+%.64.hex: %.bin
+	hexdump -v -e '1/8 "%016x\n"' $< > $@
+
+%.128.hex: %.64.hex
+	awk '{if(NR%2){buf=$$0}else{print $$0 buf; buf=""}}' $< > $@
