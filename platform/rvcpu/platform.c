@@ -8,8 +8,10 @@
 
 #include <sbi/riscv_asm.h>
 #include <sbi/riscv_encoding.h>
+#include <sbi/riscv_io.h>
 #include <sbi/sbi_const.h>
 #include <sbi/sbi_platform.h>
+#include <sbi/sbi_system.h>
 
 /*
  * Include these files as needed.
@@ -29,6 +31,7 @@
 #define PLATFORM_ACLINT_MSWI_ADDR   (PLATFORM_CLINT_ADDR + CLINT_MSWI_OFFSET)
 #define PLATFORM_ACLINT_MTIMER_ADDR (PLATFORM_CLINT_ADDR + CLINT_MTIMER_OFFSET)
 #define PLATFORM_UART_ADDR          0x10000000
+#define PLATFORM_RST_CTRL_ADDR      0x10000100
 
 static struct plic_data plic = {
     .addr = PLATFORM_PLIC_ADDR,
@@ -57,6 +60,23 @@ static struct aclint_mtimer_data mtimer = {
     .has_64bit_mmio = false,
 };
 
+static int rvcpu_system_reset_check(u32 type, u32 reason)
+{
+    return 1;
+}
+
+static void rvcpu_system_reset(u32 type, u32 reason)
+{
+    writel(1, (void *)PLATFORM_RST_CTRL_ADDR);
+    while (1);
+}
+
+static struct sbi_system_reset_device rvcpu_reset = {
+    .name = "rvcpu_reset",
+    .system_reset_check = rvcpu_system_reset_check,
+    .system_reset = rvcpu_system_reset,
+};
+
 /*
  * Platform early initialization.
  */
@@ -64,6 +84,8 @@ static int platform_early_init(bool cold_boot)
 {
     if (!cold_boot)
         return 0;
+
+    sbi_system_reset_add_device(&rvcpu_reset);
 
     return rvcpu_uart_init(PLATFORM_UART_ADDR);
 }
