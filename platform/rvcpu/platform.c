@@ -9,8 +9,10 @@
 #include <sbi/riscv_asm.h>
 #include <sbi/riscv_encoding.h>
 #include <sbi/riscv_io.h>
+#include <sbi/riscv_io.h>
 #include <sbi/sbi_const.h>
 #include <sbi/sbi_platform.h>
+#include <sbi/sbi_system.h>
 #include <sbi/sbi_system.h>
 
 /*
@@ -32,6 +34,9 @@
 #define PLATFORM_ACLINT_MTIMER_ADDR (PLATFORM_CLINT_ADDR + CLINT_MTIMER_OFFSET)
 #define PLATFORM_UART_ADDR          0x10000000
 #define PLATFORM_RST_CTRL_ADDR      0x10000100
+#define PLATFORM_SD_FLUSH_ADDR      0xa0000018
+#define PLATFORM_SD_FLUSH_BUSY_BIT  0x1
+#define PLATFORM_SD_FLUSH_TIMEOUT   10000000
 
 static struct plic_data plic = {
     .addr = PLATFORM_PLIC_ADDR,
@@ -65,8 +70,21 @@ static int rvcpu_system_reset_check(u32 type, u32 reason)
     return 1;
 }
 
+static void rvcpu_sd_cache_flush(void)
+{
+    u32 i;
+
+    writel(1, (void *)PLATFORM_SD_FLUSH_ADDR);
+    for (i = 0; i < PLATFORM_SD_FLUSH_TIMEOUT; i++) {
+        if (!(readl((void *)PLATFORM_SD_FLUSH_ADDR) &
+              PLATFORM_SD_FLUSH_BUSY_BIT))
+            break;
+    }
+}
+
 static void rvcpu_system_reset(u32 type, u32 reason)
 {
+    rvcpu_sd_cache_flush();
     writel(1, (void *)PLATFORM_RST_CTRL_ADDR);
     while (1);
 }
