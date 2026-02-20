@@ -10,6 +10,7 @@
 #include <sbi/riscv_encoding.h>
 #include <sbi/riscv_io.h>
 #include <sbi/sbi_const.h>
+#include <sbi/sbi_ecall_interface.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_system.h>
 
@@ -33,8 +34,9 @@
 #define PLATFORM_UART_ADDR          0x10000000
 #define PLATFORM_RST_CTRL_ADDR      0x10000100
 #define PLATFORM_SD_FLUSH_ADDR      0xa0000018
-#define PLATFORM_SD_READY_ADDR      0xa0000014
-#define PLATFORM_SD_READY_DONE_BIT  0x1
+#define PLATFORM_SD_FLUSH_DONE_ADDR 0xa000001c
+#define PLATFORM_SD_FLUSH_DONE_CLR  0xa0000020
+#define PLATFORM_SD_FLUSH_DONE_BIT  0x1
 #define PLATFORM_SD_FLUSH_TIMEOUT   10000000
 
 static struct plic_data plic = {
@@ -72,20 +74,33 @@ static int rvcpu_system_reset_check(u32 type, u32 reason)
 static void rvcpu_sd_cache_flush(void)
 {
     u32 i;
-
     writel(1, (void *)PLATFORM_SD_FLUSH_ADDR);
     for (i = 0; i < PLATFORM_SD_FLUSH_TIMEOUT; i++) {
-        if (readl((void *)PLATFORM_SD_READY_ADDR) &
-            PLATFORM_SD_READY_DONE_BIT)
+        if (readl((void *)PLATFORM_SD_FLUSH_DONE_ADDR)) {
+            writel(1, (void *)PLATFORM_SD_FLUSH_DONE_CLR);
             break;
+        }
     }
+    return;
 }
 
 static void rvcpu_system_reset(u32 type, u32 reason)
 {
-    rvcpu_sd_cache_flush();
-    writel(1, (void *)PLATFORM_RST_CTRL_ADDR);
-    while (1);
+	switch (type) {
+    // shutdown the system without rebooting.
+	case SBI_SRST_RESET_TYPE_SHUTDOWN:
+		rvcpu_sd_cache_flush();
+		csr_write(CSR_MIE, 0);
+		while (1) wfi();
+		break;
+    // Reboot the system.
+	case SBI_SRST_RESET_TYPE_COLD_REBOOT:
+	case SBI_SRST_RESET_TYPE_WARM_REBOOT:
+	default:
+		writel(1, (void *)PLATFORM_RST_CTRL_ADDR);
+		while (1);
+		break;
+	}
 }
 
 static struct sbi_system_reset_device rvcpu_reset = {
