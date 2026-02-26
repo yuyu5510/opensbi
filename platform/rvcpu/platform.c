@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: BSD-2-Clause
+ * SPDX-License-Identifier: BMMC-2-Clause
  *
  * Copyright (c) 2019 Western Digital Corporation or its affiliates.
  * Copyright (c) 2025 Archlab, Science Tokyo
@@ -13,31 +13,33 @@
 #include <sbi/sbi_ecall_interface.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_system.h>
+#include <libfdt.h>
 
 /*
  * Include these files as needed.
  * See objects.mk PLATFORM_xxx configuration parameters.
  */
+#include <sbi_utils/fdt/fdt_helper.h>
 #include <sbi_utils/ipi/aclint_mswi.h>
 #include <sbi_utils/irqchip/plic.h>
 #include <sbi_utils/serial/rvcpu-uart.h>
 #include <sbi_utils/timer/aclint_mtimer.h>
 
-#define PLATFORM_PLIC_ADDR          0xc000000
-#define PLATFORM_PLIC_SIZE          (0x200000 + (PLATFORM_HART_COUNT * 0x1000))
-#define PLATFORM_PLIC_NUM_SOURCES   1
-#define PLATFORM_HART_COUNT         1
-#define PLATFORM_CLINT_ADDR         0x2000000
-#define PLATFORM_ACLINT_MTIMER_FREQ 10000000
-#define PLATFORM_ACLINT_MSWI_ADDR   (PLATFORM_CLINT_ADDR + CLINT_MSWI_OFFSET)
-#define PLATFORM_ACLINT_MTIMER_ADDR (PLATFORM_CLINT_ADDR + CLINT_MTIMER_OFFSET)
-#define PLATFORM_UART_ADDR          0x10000000
-#define PLATFORM_RST_CTRL_ADDR      0x10000100
-#define PLATFORM_SD_FLUSH_ADDR      0xa0000018
-#define PLATFORM_SD_FLUSH_DONE_ADDR 0xa000001c
-#define PLATFORM_SD_FLUSH_DONE_CLR  0xa0000020
-#define PLATFORM_SD_FLUSH_DONE_BIT  0x1
-#define PLATFORM_SD_FLUSH_TIMEOUT   10000000
+#define PLATFORM_PLIC_ADDR           0xc000000
+#define PLATFORM_PLIC_SIZE           (0x200000 + (PLATFORM_HART_COUNT * 0x1000))
+#define PLATFORM_PLIC_NUM_SOURCES    1
+#define PLATFORM_HART_COUNT          1
+#define PLATFORM_CLINT_ADDR          0x2000000
+#define PLATFORM_ACLINT_MTIMER_FREQ  10000000
+#define PLATFORM_ACLINT_MSWI_ADDR    (PLATFORM_CLINT_ADDR + CLINT_MSWI_OFFSET)
+#define PLATFORM_ACLINT_MTIMER_ADDR  (PLATFORM_CLINT_ADDR + CLINT_MTIMER_OFFSET)
+#define PLATFORM_UART_ADDR           0x10000000
+#define PLATFORM_RST_CTRL_ADDR       0x10000100
+#define PLATFORM_MMC_FLUSH_ADDR      0xa0000018
+#define PLATFORM_MMC_FLUSH_DONE_ADDR 0xa000001c
+#define PLATFORM_MMC_FLUSH_DONE_CLR  0xa0000020
+#define PLATFORM_MMC_FLUSH_DONE_BIT  0x1
+#define PLATFORM_MMC_FLUSH_TIMEOUT   10000000
 
 static struct plic_data plic = {
     .addr = PLATFORM_PLIC_ADDR,
@@ -66,39 +68,63 @@ static struct aclint_mtimer_data mtimer = {
     .has_64bit_mmio = false,
 };
 
+static bool mmc_flush_enabled;
+
 static int rvcpu_system_reset_check(u32 type, u32 reason)
 {
     return 1;
 }
 
-static void rvcpu_sd_cache_flush(void)
+static bool rvcpu_mmc_flush_enabled_from_fdt(void)
+{
+    const void *fdt = fdt_get_address();
+    int nodeoff = -1;
+
+    if (!fdt || fdt_check_header(fdt))
+        return false;
+
+    while (1) {
+        nodeoff = fdt_node_offset_by_compatible(fdt, nodeoff, "rvcom,sdcard");
+        if (nodeoff < 0)
+            break;
+        if (fdt_node_is_enabled(fdt, nodeoff))
+            return true;
+    }
+
+    return false;
+}
+
+static void rvcpu_mmc_cache_flush(void)
 {
     u32 i;
-    writel(1, (void *)PLATFORM_SD_FLUSH_ADDR);
-    for (i = 0; i < PLATFORM_SD_FLUSH_TIMEOUT; i++) {
-        if (readl((void *)PLATFORM_SD_FLUSH_DONE_ADDR)) {
-            writel(1, (void *)PLATFORM_SD_FLUSH_DONE_CLR);
+
+    writel(1, (void *)PLATFORM_MMC_FLUSH_ADDR);
+    for (i = 0; i < PLATFORM_MMC_FLUSH_TIMEOUT; i++) {
+        if (readl((void *)PLATFORM_MMC_FLUSH_DONE_ADDR) &
+            PLATFORM_MMC_FLUSH_DONE_BIT) {
+            writel(1, (void *)PLATFORM_MMC_FLUSH_DONE_CLR);
             break;
         }
     }
-    return;
 }
 
 static void rvcpu_system_reset(u32 type, u32 reason)
 {
 	switch (type) {
-    // shutdown the system without rebooting.
 	case SBI_SRST_RESET_TYPE_SHUTDOWN:
-		rvcpu_sd_cache_flush();
+		if (mmc_flush_enabled)
+			rvcpu_mmc_cache_flush();
 		csr_write(CSR_MIE, 0);
-		while (1) wfi();
+		while (1)
+			wfi();
 		break;
-    // Reboot the system.
+
 	case SBI_SRST_RESET_TYPE_COLD_REBOOT:
 	case SBI_SRST_RESET_TYPE_WARM_REBOOT:
 	default:
 		writel(1, (void *)PLATFORM_RST_CTRL_ADDR);
-		while (1);
+		while (1)
+			;
 		break;
 	}
 }
@@ -117,6 +143,7 @@ static int platform_early_init(bool cold_boot)
     if (!cold_boot)
         return 0;
 
+    mmc_flush_enabled = rvcpu_mmc_flush_enabled_from_fdt();
     sbi_system_reset_add_device(&rvcpu_reset);
 
     return rvcpu_uart_init(PLATFORM_UART_ADDR);
