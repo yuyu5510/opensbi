@@ -140,13 +140,19 @@ static struct sbi_system_reset_device rvcpu_reset = {
  */
 static int platform_early_init(bool cold_boot)
 {
+    int rc;
+    
     if (!cold_boot)
         return 0;
 
     mmc_flush_enabled = rvcpu_mmc_flush_enabled_from_fdt();
     sbi_system_reset_add_device(&rvcpu_reset);
 
-    return rvcpu_uart_init(PLATFORM_UART_ADDR);
+    rc = rvcpu_uart_init(PLATFORM_UART_ADDR);
+    if (rc)
+        return rc;
+
+    return aclint_mswi_cold_init(&mswi);
 }
 
 /*
@@ -167,15 +173,6 @@ static int platform_irqchip_init(void)
 }
 
 /*
- * Initialize IPI during cold boot.
- */
-static int platform_ipi_init(void)
-{
-    /* Example if the generic ACLINT driver is used */
-    return aclint_mswi_cold_init(&mswi);
-}
-
-/*
  * Initialize platform timer during cold boot.
  */
 static int platform_timer_init(void)
@@ -191,7 +188,6 @@ const struct sbi_platform_operations platform_ops = {
     .early_init         = platform_early_init,
     .final_init         = platform_final_init,
     .irqchip_init       = platform_irqchip_init,
-    .ipi_init           = platform_ipi_init,
     .timer_init         = platform_timer_init
 };
 
